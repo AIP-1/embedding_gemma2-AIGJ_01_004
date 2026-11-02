@@ -1,6 +1,6 @@
-# EmbeddingGemma 2 멀티모달 임베딩 실습 1~7단계 (AIGJ_01_004)
+# EmbeddingGemma 2 멀티모달 임베딩 실습 1~10단계 (AIGJ_01_004)
 
-Jetson Orin Nano에서 EmbeddingGemma 2로 텍스트·이미지·동영상·음성을 같은 임베딩 공간에 넣고 검색한 실습 결과입니다. 8~10단계(웹캠 물체 추출, 동작 인식, 두 카메라 근접 알람)는 [practice_task_for_jetson_camera_applications-AIGJ_01_004](https://github.com/AIP-1/practice_task_for_jetson_camera_applications-AIGJ_01_004) 저장소에 있습니다. 실습 안내문은 [docs/guide_README.md](docs/guide_README.md)에 있습니다.
+Jetson Orin Nano에서 EmbeddingGemma 2로 텍스트·이미지·동영상·음성을 같은 임베딩 공간에 넣고 검색하고(1~7단계), 웹캠 물체 추출·사람 동작 인식·두 카메라 근접 알람으로 응용한(8~10단계) 실습 결과입니다. 8~10단계는 [practice_task_for_jetson_camera_applications-AIGJ_01_004](https://github.com/AIP-1/practice_task_for_jetson_camera_applications-AIGJ_01_004) 저장소에도 같은 내용으로 올려 두었습니다. 실습 안내문은 [docs/guide_README.md](docs/guide_README.md)에 있습니다.
 
 ## 환경 (보드 B, team5-b)
 
@@ -8,7 +8,7 @@ Jetson Orin Nano에서 EmbeddingGemma 2로 텍스트·이미지·동영상·음�
 - 전원 모드 MAXN_SUPER (nvpmodel 모드 2), 스왑 8GB
 - torch 2.14.1+cu132, sentence-transformers 6.2.0, transformers 5.20.2
 - 모델 google/embeddinggemma-2 (bfloat16)
-- USB 웹캠 Logitech C920 (영상, 마이크)
+- USB 웹캠 Logitech C920 2대 (영상, 마이크, 10단계는 두 대 동시 사용), ultralytics 8.4.184
 
 ## 진행 단계
 
@@ -21,6 +21,9 @@ Jetson Orin Nano에서 EmbeddingGemma 2로 텍스트·이미지·동영상·음�
 | 5 | 음성 검색 | `gen_audio.py`, `test_audio.py` | 완료 |
 | 6 | 성능 측정 (지연, 메모리, GPU) | 3~5단계 코드 + tegrastats | 완료 |
 | 7 | 도메인 미세 조정 (텍스트 모델) | `eval_ir.py`, `train_ft.py`, `compare_text.py` | 완료 |
+| 8 | 웹캠 물체 추출과 웹 검색 (YOLO, 임베딩 재라벨, YOLOE) | `app.py` | 완료 |
+| 9 | 사람 동작 인식과 행동 패턴, GRU 학습 | `pose_app.py`, `pose_model.py`, `train_pose.py` | 완료 |
+| 10 | 두 카메라 보정, 거리 비교, 타겟 자동 찾기, 이동 타겟 충돌 알람 | `prox/` | 완료 |
 
 ## 폴더 구성
 
@@ -35,9 +38,14 @@ test_audio.py    5단계 음성 검색
 eval_ir.py       7단계 검색 평가 (accuracy@k, ndcg@10)
 train_ft.py      7단계 미세 조정 학습
 compare_text.py  7단계 학습 전후 3단계 문장 점수 비교
-data/            7단계 학습 300쌍, 평가 60쌍 (jsonl)
-results/         3~7단계 측정 결과, 7단계 학습 로그
-reports/         최종 보고서 PDF (1~10단계)
+app.py           8단계 물체 추출 + 웹 검색 서버 (--mode yolo|relabel|yoloe)
+pose_app.py      9단계 동작·행동 인식 (--raw, --record, --behavior, --model)
+pose_model.py    9단계 관절 특징과 GRU 모델
+train_pose.py    9단계 학습 스크립트
+prox/            10단계 두 카메라 근접 알람 (보정, 삼각측량, 알람 앱, 기준점 좌표)
+data/            7단계 학습·평가 jsonl, 9단계 동작·행동 학습 데이터(관절 좌표 csv)
+results/         3~10단계 측정 결과, 7단계 학습 로그
+reports/         PDF 보고서 (1~10단계 전체, 9단계, 10단계)
 docs/            실습 안내문
 ```
 
@@ -65,6 +73,32 @@ docs/            실습 안내문
 - 학습 중 최대 RAM 6769 / 7485 MB, 배치 8로 OOM 없이 완료.
 - 3단계 질의 재확인: "냉방 몇 도" 질의는 정답과 2위 차이가 0.070 → 0.177로 커졌고, "졸리고 머리가 맑지 않아요" 질의는 학습 전에도 CO2·조도 문장 차이가 0.007로 거의 같았는데 학습 후 조도 문장이 0.014 앞서며 순위가 바뀜.
 
+**8단계 물체 추출**
+
+| 모드 | fps | 특징 |
+| --- | --- | --- |
+| yolo | 15 | COCO에 없는 물체를 비슷한 클래스로 오인식 (이어폰→remote, 에어컨→microwave) |
+| relabel | 15~17 | 목록에 넣은 물체는 바로잡지만 목록 밖 물체는 엉뚱한 이름으로 바꿈 |
+| yoloe | 13 | 선풍기·벽시계처럼 COCO에 없는 물체도 이름으로 찾음, 작은 물체는 헷갈림 |
+
+**9단계 동작·행동 인식**
+- 프레임 단위 판정으로는 손 흔들기를 구분할 수 없었고, 시간 패턴(1.5초 안 방향 전환)으로 해결.
+- 동작 GRU(window 30) 검증 정확도 0.989. 실시간으로 4개 동작 모두 인식.
+- 행동(지나감/힐끗 봄/관심 있음)은 한 번 지나가는 시간이 짧아 window 15로 학습.
+
+**10단계 두 카메라 근접 알람**
+- 카메라 보정: 재투영 오차 3.78 / 3.22 px, 확인점 오차 3 cm.
+
+| 실제 거리 (서 있음) | ankle1 | stereo | fused |
+| --- | --- | --- | --- |
+| 0.5 m | 0.56 | 0.61 | 0.63 |
+| 1.0 m | 1.18 | 1.06 | 1.21 |
+| 2.0 m | 2.05 | 2.14 | 2.11 |
+| fps | 26.7 | 23.1 | 23 |
+
+- 타겟 자동 찾기 후 알람 시나리오 5개 모두 3/3 성공.
+- 이동 타겟: 충돌 위험 알람이 근접 알람보다 천천히 걸을 때 약 3초, 보통 속도일 때 약 1초 먼저 울림. `--ttc 3.0`이면 각각 1초 더 일찍 울림.
+
 ## 안내문과 다르게 한 점
 
 1. 전원 모드: MAXN_SUPER가 이 보드에선 모드 2 (안내문의 `-m 0`은 15W).
@@ -76,5 +110,8 @@ docs/            실습 안내문
 4. 7단계 학습 데이터: 안내문이 말하는 제공 파일(`train.jsonl` 282쌍, `eval.jsonl` 60쌍)이 강의 저장소에 없어서 안내문 규격대로 새로 작성 (학습 문서 100개 × 질의 3개 = 300쌍, 평가 문서 20개 × 질의 3개 = 60쌍, 문서·질의 겹침 없음, 수치는 실습용 가상 운영 기준).
 5. 7단계 당시 보드 인터넷이 끊겨 있어서 `datasets` 설치 파일을 따로 받아 `pip install --no-index --find-links`로 설치하고, 모델은 `HF_HUB_OFFLINE=1`로 캐시에서 불러옴.
 6. 7단계에서 `eg2.py`의 `MODEL_ID`를 `models/eg2-classroom`으로 바꿔 3단계 테스트를 다시 돌렸음. 저장소의 `eg2.py`는 원래 모델(`google/embeddinggemma-2`)로 둠. 학습한 모델(517MB)은 GitHub 파일 크기 제한 때문에 넣지 않음.
+7. ultralytics 8.4.184에서 `half=True`가 프레임마다 경고를 띄워서 `app.py`, `pose_app.py`, `proximity_app.py`에서 제거.
+8. 9단계 `train_pose.py`: 표준편차가 0에 가까운 특징 때문에 실시간 판정이 틀어져서 `std.clamp(min=0.03)`으로 수정.
+9. 10단계 카메라는 `--cams 0 2`(/dev/video0, /dev/video2), 렌즈 보정은 태블릿 체커보드(칸 22 mm, `--square 0.022`).
 
-녹음·녹화 파일(wav, mp4, jpg)과 학습한 모델은 저장소에 넣지 않았습니다.
+녹음·녹화 파일(wav, mp4, jpg), 학습한 모델(.pt, safetensors), 카메라 보정 결과(.npz)는 저장소에 넣지 않았습니다.
